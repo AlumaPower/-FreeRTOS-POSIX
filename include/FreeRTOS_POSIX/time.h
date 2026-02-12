@@ -56,6 +56,7 @@ extern "C" {
 /**@{ */
 #define CLOCK_REALTIME     0     /**< The identifier of the system-wide clock measuring real time. */
 #define CLOCK_MONOTONIC    1     /**< The identifier for the system-wide monotonic clock.*/
+#define CLOCK_SNTP 2             /**< The identifier for the system-wide sntp clock.*/
 /**@} */
 
 /**
@@ -97,6 +98,13 @@ extern "C" {
         struct timespec it_value;    /**< Timer expiration. */
     };
 #endif
+
+struct sntp {
+    struct timespec sntp_base;
+    struct timespec monotonic_base;
+    uint8_t base_set_flag;
+    int32_t rate_ppb;
+};
 
 /**
  * @brief Report CPU time used.
@@ -258,6 +266,10 @@ int timer_settime( timer_t timerid,
                    int flags,
                    const struct itimerspec * value,
                    struct itimerspec * ovalue );
+
+void set_sntp_globals(struct timespec sntp); 
+
+
 
 #ifdef __cplusplus
 }

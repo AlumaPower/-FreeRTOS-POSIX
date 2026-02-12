@@ -38,6 +38,35 @@
 #include "FreeRTOS_POSIX/time.h"
 #include "FreeRTOS_POSIX/utils.h"
 
+struct sntp sntp_globals = { .sntp_base.tv_nsec = 0, .sntp_base.tv_sec = 0, .monotonic_base.tv_nsec = 0, .monotonic_base.tv_sec = 0, .rate_ppb = 0, .base_set_flag = 0 };
+
+
+static inline void normalize_timespec(struct timespec *ts) {
+    while (ts->tv_nsec >= 1000000000L) { ts->tv_nsec -= 1000000000L; ts->tv_sec += 1; }
+    while (ts->tv_nsec < 0)            { ts->tv_nsec += 1000000000L; ts->tv_sec -= 1; }
+}
+
+static inline void ts_sub(const struct timespec *a, const struct timespec *b, struct timespec *out) {
+    out->tv_sec  = a->tv_sec  - b->tv_sec;
+    out->tv_nsec = a->tv_nsec - b->tv_nsec;
+    normalize_timespec(out);
+}
+
+static inline void ts_add(const struct timespec *a, const struct timespec *b, struct timespec *out) {
+    out->tv_sec  = a->tv_sec  + b->tv_sec;
+    out->tv_nsec = a->tv_nsec + b->tv_nsec;
+    normalize_timespec(out);
+}
+
+void sntp_predict_now(struct sntp *g, struct timespec *tp) {
+    struct timespec curr_mono;
+    struct timespec elapsed; 
+    clock_gettime(CLOCK_MONOTONIC, &curr_mono);      // same source as when you set the base
+    ts_sub(&curr_mono, &g->monotonic_base, &elapsed); // elapsed = mono_now - mono_base
+    ts_add(&g->sntp_base, &elapsed, tp);              // now = sntp_base + elapsed
+}
+
+
 /* Declaration of snprintf. The header stdio.h is not included because it
  * includes conflicting symbols on some platforms. */
 extern int snprintf( char * s,
@@ -90,29 +119,42 @@ int clock_getres( clockid_t clock_id,
 int clock_gettime( clockid_t clock_id,
                    struct timespec * tp )
 {
-    TimeOut_t xCurrentTime = { 0 };
 
-    /* Intermediate variable used to convert TimeOut_t to struct timespec.
-     * Also used to detect overflow issues. It must be unsigned because the
-     * behavior of signed integer overflow is undefined. */
-    uint64_t ullTickCount = 0ULL;
+    if(clock_id == CLOCK_REALTIME || clock_id == CLOCK_MONOTONIC){
 
-    /* Silence warnings about unused parameters. */
-    ( void ) clock_id;
+    
+        TimeOut_t xCurrentTime = { 0 };
 
-    /* Get the current tick count and overflow count. vTaskSetTimeOutState()
-     * is used to get these values because they are both static in tasks.c. */
-    vTaskSetTimeOutState( &xCurrentTime );
+        /* Intermediate variable used to convert TimeOut_t to struct timespec.
+        * Also used to detect overflow issues. It must be unsigned because the
+        * behavior of signed integer overflow is undefined. */
+        uint64_t ullTickCount = 0ULL;
 
-    /* Adjust the tick count for the number of times a TickType_t has overflowed.
-     * portMAX_DELAY should be the maximum value of a TickType_t. */
-    ullTickCount = ( uint64_t ) ( xCurrentTime.xOverflowCount ) << ( sizeof( TickType_t ) * 8 );
+        /* Silence warnings about unused parameters. */
+        ( void ) clock_id;
 
-    /* Add the current tick count. */
-    ullTickCount += xCurrentTime.xTimeOnEntering;
+        /* Get the current tick count and overflow count. vTaskSetTimeOutState()
+        * is used to get these values because they are both static in tasks.c. */
+        vTaskSetTimeOutState( &xCurrentTime );
 
-    /* Convert ullTickCount to timespec. */
-    UTILS_NanosecondsToTimespec( ( int64_t ) ullTickCount * NANOSECONDS_PER_TICK, tp );
+        /* Adjust the tick count for the number of times a TickType_t has overflowed.
+        * portMAX_DELAY should be the maximum value of a TickType_t. */
+        ullTickCount = ( uint64_t ) ( xCurrentTime.xOverflowCount ) << ( sizeof( TickType_t ) * 8 );
+
+        /* Add the current tick count. */
+        ullTickCount += xCurrentTime.xTimeOnEntering;
+
+        /* Convert ullTickCount to timespec. */
+        UTILS_NanosecondsToTimespec( ( int64_t ) ullTickCount * NANOSECONDS_PER_TICK, tp );
+
+    } else if(clock_id == CLOCK_SNTP){
+
+        struct timespec curr_monotonic = { 0 }; 
+        clock_gettime(CLOCK_MONOTONIC, &curr_monotonic); 
+
+        ts_add(&sntp_globals.sntp_base, &curr_monotonic, tp); 
+        ts_sub(tp, &sntp_globals.monotonic_base, tp); 
+    }
 
     return 0;
 }
@@ -246,3 +288,17 @@ int nanosleep( const struct timespec * rqtp,
 }
 
 /*-----------------------------------------------------------*/
+
+void set_sntp_globals(struct timespec sntp){
+    
+    if (!sntp_globals.base_set_flag) {
+            sntp_globals.sntp_base = sntp;
+            clock_gettime(CLOCK_MONOTONIC, &sntp_globals.monotonic_base);
+            sntp_globals.rate_ppb = 0;
+            sntp_globals.base_set_flag = 1;
+            return;
+        } 
+
+        //TODO slew smooth time resetting not implemented
+
+}
