@@ -58,13 +58,6 @@ static inline void ts_add(const struct timespec *a, const struct timespec *b, st
     normalize_timespec(out);
 }
 
-void sntp_predict_now(struct sntp *g, struct timespec *tp) {
-    struct timespec curr_mono;
-    struct timespec elapsed; 
-    clock_gettime(CLOCK_MONOTONIC, &curr_mono);      // same source as when you set the base
-    ts_sub(&curr_mono, &g->monotonic_base, &elapsed); // elapsed = mono_now - mono_base
-    ts_add(&g->sntp_base, &elapsed, tp);              // now = sntp_base + elapsed
-}
 
 
 /* Declaration of snprintf. The header stdio.h is not included because it
@@ -149,11 +142,26 @@ int clock_gettime( clockid_t clock_id,
 
     } else if(clock_id == CLOCK_SNTP){
 
-        struct timespec curr_monotonic = { 0 }; 
-        clock_gettime(CLOCK_MONOTONIC, &curr_monotonic); 
+        if(sntp_globals.base_set_flag == 0){
+            return -1; 
+        }
 
-        ts_add(&sntp_globals.sntp_base, &curr_monotonic, tp); 
-        ts_sub(tp, &sntp_globals.monotonic_base, tp); 
+        struct timespec curr_mono = {0};
+        struct timespec elapsed = {0};
+        struct timespec slew_adj = {0};
+
+        clock_gettime(CLOCK_MONOTONIC, &curr_mono);
+        ts_sub(&curr_mono, &sntp_globals.monotonic_base, &elapsed);
+
+        int64_t total_slew_ns = (int64_t)elapsed.tv_sec * sntp_globals.rate_ppb;
+        total_slew_ns += ((int64_t)elapsed.tv_nsec * sntp_globals.rate_ppb) / 1000000000LL;
+
+        slew_adj.tv_sec = total_slew_ns / 1000000000LL;
+        slew_adj.tv_nsec = total_slew_ns % 1000000000LL;
+
+        ts_add(&sntp_globals.sntp_base, &elapsed, tp);
+        ts_add(tp, &slew_adj, tp);
+
     }
 
     return 0;
@@ -241,16 +249,55 @@ int clock_settime( clockid_t clock_id,
     /* Silence warnings about unused parameters. */
     ( void ) clock_id;
     ( void ) tp;
+    
 
-    /* This function is currently unsupported. It will always return -1 and
-     * set errno to EPERM. */
-    #if ( configUSE_POSIX_ERRNO == 1 )
-    {
-        errno = EPERM;
+    if(clock_id == CLOCK_SNTP){
+        struct timespec server_adj = *tp;
+
+        struct timespec curr_mono = {0}; 
+        clock_gettime(CLOCK_MONOTONIC, &curr_mono);
+
+        if (!sntp_globals.base_set_flag) {
+            sntp_globals.sntp_base = *tp;
+            clock_gettime(CLOCK_MONOTONIC, &sntp_globals.monotonic_base);
+            sntp_globals.rate_ppb = 0;
+            sntp_globals.base_set_flag = 1; 
+        } else {
+            struct timespec current_predicted = {0}; 
+            struct timespec time_delta = {0}; 
+            struct timespec time_interval = {0}; 
+
+
+            server_adj.tv_nsec += 500000000L; 
+            clock_gettime(CLOCK_SNTP, &current_predicted);
+            ts_sub(&server_adj, &current_predicted, &time_delta); 
+
+            clock_gettime(CLOCK_MONOTONIC, &curr_mono);
+            ts_sub(&curr_mono, &sntp_globals.monotonic_base, &time_interval);
+
+            sntp_globals.sntp_base = current_predicted;
+            sntp_globals.monotonic_base = curr_mono;
+
+            if(time_delta.tv_sec >= DELTA_MAX || time_delta.tv_sec <= -DELTA_MAX){
+                sntp_globals.sntp_base = *tp;
+                clock_gettime(CLOCK_MONOTONIC, &sntp_globals.monotonic_base);
+                sntp_globals.rate_ppb = 0;
+            } else {
+
+                if(time_interval.tv_sec != 0){
+                    int64_t total_delta_ns = (int64_t)time_delta.tv_sec * 1000000000LL + time_delta.tv_nsec;
+                    int32_t new_rate = (int32_t)(total_delta_ns / time_interval.tv_sec);  
+                    sntp_globals.rate_ppb = (sntp_globals.rate_ppb + new_rate) / 2;
+                } 
+                
+            }
+
+        }
+
+        
     }
-    #endif
 
-    return -1;
+    return 0;
 }
 
 /*-----------------------------------------------------------*/
@@ -289,16 +336,3 @@ int nanosleep( const struct timespec * rqtp,
 
 /*-----------------------------------------------------------*/
 
-void set_sntp_globals(struct timespec sntp){
-    
-    if (!sntp_globals.base_set_flag) {
-            sntp_globals.sntp_base = sntp;
-            clock_gettime(CLOCK_MONOTONIC, &sntp_globals.monotonic_base);
-            sntp_globals.rate_ppb = 0;
-            sntp_globals.base_set_flag = 1;
-            return;
-        } 
-
-        //TODO slew smooth time resetting not implemented
-
-}

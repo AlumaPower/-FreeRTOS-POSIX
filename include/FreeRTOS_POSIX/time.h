@@ -41,6 +41,8 @@ extern "C" {
 #include "FreeRTOS_POSIX/sys/types.h"
 #include "FreeRTOS_POSIX/signal.h"
 
+#define DELTA_MAX 5
+
 /**
  * @name Unit conversion constants.
  */
@@ -267,7 +269,6 @@ int timer_settime( timer_t timerid,
                    const struct itimerspec * value,
                    struct itimerspec * ovalue );
 
-void set_sntp_globals(struct timespec sntp); 
 
 
 
