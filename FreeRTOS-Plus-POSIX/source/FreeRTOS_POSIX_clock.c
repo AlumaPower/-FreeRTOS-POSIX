@@ -42,8 +42,8 @@ struct sntp sntp_globals = { .sntp_base.tv_nsec = 0, .sntp_base.tv_sec = 0, .mon
 
 
 static inline void normalize_timespec(struct timespec *ts) {
-    while (ts->tv_nsec >= 1000000000L) { ts->tv_nsec -= 1000000000L; ts->tv_sec += 1; }
-    while (ts->tv_nsec < 0)            { ts->tv_nsec += 1000000000L; ts->tv_sec -= 1; }
+    while (ts->tv_nsec >= NANOSECONDS_PER_SECOND) { ts->tv_nsec -= NANOSECONDS_PER_SECOND; ts->tv_sec += 1; }
+    while (ts->tv_nsec < 0)            { ts->tv_nsec += NANOSECONDS_PER_SECOND; ts->tv_sec -= 1; }
 }
 
 static inline void ts_sub(const struct timespec *a, const struct timespec *b, struct timespec *out) {
@@ -154,10 +154,10 @@ int clock_gettime( clockid_t clock_id,
         ts_sub(&curr_mono, &sntp_globals.monotonic_base, &elapsed);
 
         int64_t total_slew_ns = (int64_t)elapsed.tv_sec * sntp_globals.rate_ppb;
-        total_slew_ns += ((int64_t)elapsed.tv_nsec * sntp_globals.rate_ppb) / 1000000000LL;
+        total_slew_ns += ((int64_t)elapsed.tv_nsec * sntp_globals.rate_ppb) / NANOSECONDS_PER_SECOND;
 
-        slew_adj.tv_sec = total_slew_ns / 1000000000LL;
-        slew_adj.tv_nsec = total_slew_ns % 1000000000LL;
+        slew_adj.tv_sec = total_slew_ns / NANOSECONDS_PER_SECOND;
+        slew_adj.tv_nsec = total_slew_ns % NANOSECONDS_PER_SECOND;
 
         ts_add(&sntp_globals.sntp_base, &elapsed, tp);
         ts_add(tp, &slew_adj, tp);
@@ -252,27 +252,26 @@ int clock_settime( clockid_t clock_id,
     
 
     if(clock_id == CLOCK_SNTP){
-        struct timespec server_adj = *tp;
+        struct timespec sntp_from_server = *tp;
 
         struct timespec curr_mono = {0}; 
         clock_gettime(CLOCK_MONOTONIC, &curr_mono);
 
         if (!sntp_globals.base_set_flag) {
             sntp_globals.sntp_base = *tp;
-            clock_gettime(CLOCK_MONOTONIC, &sntp_globals.monotonic_base);
+            sntp_globals.monotonic_base = curr_mono; 
             sntp_globals.rate_ppb = 0;
             sntp_globals.base_set_flag = 1; 
         } else {
+
             struct timespec current_predicted = {0}; 
             struct timespec time_delta = {0}; 
             struct timespec time_interval = {0}; 
 
 
-            server_adj.tv_nsec += 500000000L; 
             clock_gettime(CLOCK_SNTP, &current_predicted);
-            ts_sub(&server_adj, &current_predicted, &time_delta); 
+            ts_sub(&sntp_from_server, &current_predicted, &time_delta); 
 
-            clock_gettime(CLOCK_MONOTONIC, &curr_mono);
             ts_sub(&curr_mono, &sntp_globals.monotonic_base, &time_interval);
 
             sntp_globals.sntp_base = current_predicted;
@@ -280,14 +279,13 @@ int clock_settime( clockid_t clock_id,
 
             if(time_delta.tv_sec >= DELTA_MAX || time_delta.tv_sec <= -DELTA_MAX){
                 sntp_globals.sntp_base = *tp;
-                clock_gettime(CLOCK_MONOTONIC, &sntp_globals.monotonic_base);
+                sntp_globals.monotonic_base = curr_mono;
                 sntp_globals.rate_ppb = 0;
             } else {
 
                 if(time_interval.tv_sec != 0){
-                    int64_t total_delta_ns = (int64_t)time_delta.tv_sec * 1000000000LL + time_delta.tv_nsec;
-                    int32_t new_rate = (int32_t)(total_delta_ns / time_interval.tv_sec);  
-                    sntp_globals.rate_ppb = (sntp_globals.rate_ppb + new_rate) / 2;
+                    int64_t total_delta_ns = ((int64_t)time_delta.tv_sec * NANOSECONDS_PER_SECOND) + time_delta.tv_nsec; 
+                    sntp_globals.rate_ppb = (int32_t)(total_delta_ns / time_interval.tv_sec);  
                 } 
                 
             }
