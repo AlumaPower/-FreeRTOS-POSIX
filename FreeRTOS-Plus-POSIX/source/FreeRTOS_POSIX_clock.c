@@ -113,7 +113,7 @@ int clock_gettime( clockid_t clock_id,
                    struct timespec * tp )
 {
 
-    if(clock_id == CLOCK_REALTIME || clock_id == CLOCK_MONOTONIC){
+    if(clock_id == CLOCK_MONOTONIC){
 
     
         TimeOut_t xCurrentTime = { 0 };
@@ -140,7 +140,7 @@ int clock_gettime( clockid_t clock_id,
         /* Convert ullTickCount to timespec. */
         UTILS_NanosecondsToTimespec( ( int64_t ) ullTickCount * NANOSECONDS_PER_TICK, tp );
 
-    } else if(clock_id == CLOCK_SNTP){
+    } else if(clock_id == CLOCK_REALTIME){
 
         if(sntp_globals.base_set_flag == 0){
             return -1; 
@@ -251,7 +251,7 @@ int clock_settime( clockid_t clock_id,
     ( void ) tp;
     
 
-    if(clock_id == CLOCK_SNTP){
+    if(clock_id == CLOCK_REALTIME){
         struct timespec sntp_from_server = *tp;
 
         struct timespec curr_mono = {0}; 
@@ -269,7 +269,7 @@ int clock_settime( clockid_t clock_id,
             struct timespec time_interval = {0}; 
 
 
-            clock_gettime(CLOCK_SNTP, &current_predicted);
+            clock_gettime(CLOCK_REALTIME, &current_predicted);
             ts_sub(&sntp_from_server, &current_predicted, &time_delta); 
 
             ts_sub(&curr_mono, &sntp_globals.monotonic_base, &time_interval);
