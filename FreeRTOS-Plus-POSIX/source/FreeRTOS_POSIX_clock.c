@@ -143,7 +143,7 @@ int clock_gettime( clockid_t clock_id,
     } else if(clock_id == CLOCK_REALTIME){
 
         if(sntp_globals.base_set_flag == 0){
-            return -1; 
+            return clock_gettime(CLOCK_MONOTONIC, tp);
         }
 
         struct timespec curr_mono = {0};
