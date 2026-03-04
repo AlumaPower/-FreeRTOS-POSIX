@@ -264,6 +264,14 @@ int clock_settime( clockid_t clock_id,
             sntp_globals.base_set_flag = 1; 
         } else {
 
+            struct timespec diff = {0};
+            ts_sub(&sntp_globals.sntp_base, &sntp_from_server, &diff);
+
+            
+            if (diff.tv_sec <= 3 && diff.tv_sec >= -3) {
+                return 0;
+            }
+
             struct timespec current_predicted = {0}; 
             struct timespec time_delta = {0}; 
             struct timespec time_interval = {0}; 
